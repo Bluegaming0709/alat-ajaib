@@ -218,12 +218,17 @@ async function loadSongs(){
     songs = data.clips || [];
     $('listStatus').style.display='none';
     if (!songs.length) showStatus($('listStatus'), data.message || 'Daftar lagu kosong di halaman ini.', true);
-    if (data.complete) { page = 0; $('prevBtn').disabled = true; $('nextBtn').disabled = true; if (songs.length) showStatus($('listStatus'), `Semua ${songs.length} lagu sudah dimuat — nggak perlu NEXT lagi.`); }
-    else { $('prevBtn').disabled = page === 0; $('nextBtn').disabled = songs.length === 0; }
+    if (typeof data.totalPages === 'number') {
+      page = data.page;
+      $('prevBtn').disabled = page <= 0;
+      $('nextBtn').disabled = page >= data.totalPages - 1;
+      if (songs.length) showStatus($('listStatus'), `Halaman ${page + 1} dari ${data.totalPages} — total ${data.total} lagu di workspace ini.`);
+    } else { $('prevBtn').disabled = page === 0; $('nextBtn').disabled = songs.length === 0; }
     renderSongs();
   } catch(e){ showStatus($('listStatus'), e.message, true); }
 }
 $('loadBtn').onclick = () => { page = 0; loadSongs(); };
+$('workspaceSel').onchange = () => { page = 0; };
 $('prevBtn').onclick = () => { if (page>0){ page--; loadSongs(); } };
 $('nextBtn').onclick = () => { page++; loadSongs(); };
 $('selAllBtn').onclick = () => { document.querySelectorAll('input[data-sel]').forEach(c=>c.checked=true); refreshBar(); };
