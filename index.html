@@ -218,7 +218,8 @@ async function loadSongs(){
     songs = data.clips || [];
     $('listStatus').style.display='none';
     if (!songs.length) showStatus($('listStatus'), data.message || 'Daftar lagu kosong di halaman ini.', true);
-    $('prevBtn').disabled = page === 0; $('nextBtn').disabled = songs.length === 0;
+    if (data.complete) { page = 0; $('prevBtn').disabled = true; $('nextBtn').disabled = true; if (songs.length) showStatus($('listStatus'), `Semua ${songs.length} lagu sudah dimuat — nggak perlu NEXT lagi.`); }
+    else { $('prevBtn').disabled = page === 0; $('nextBtn').disabled = songs.length === 0; }
     renderSongs();
   } catch(e){ showStatus($('listStatus'), e.message, true); }
 }

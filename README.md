@@ -39,6 +39,11 @@ Tidak ada database, tidak ada environment variable yang wajib diisi.
 3. **Lemari Lagu**: pilih workspace/playlist → LOAD LAGU → centang lagu → DOWNLOAD SEMUA. Tiap lagu disiapkan server, lalu klik **SIMPAN** di kartunya (dialog Save As / unduhan browser). Ada juga tombol TAB BARU sebagai cadangan.
 4. **Pintu Kemana Saja**: download 1 lagu dari UUID / URL suno.com/song/… tanpa token untuk lagu publik.
 
+## Perbaikan v3 (pagination)
+
+- Suno membatasi ±20 lagu per halaman di semua endpoint daftar. Server sekarang menarik **semua halaman sekaligus** sampai lagu habis (maks 12 halaman / 600 lagu), jadi playlist 30/58 lagu tampil lengkap dalam sekali LOAD LAGU.
+- Tombol PREV/NEXT otomatis nonaktif setelah semua lagu termuat, dengan keterangan "Semua N lagu sudah dimuat".
+
 ## Perbaikan v2 (load lagu)
 
 - Load lagu sekarang memakai strategi waterfall per jenis daftar: playlist mencoba `/api/playlist/v2/{id}`, `/api/playlist/{id}`, `/api/playlist/{id}/clips`, lalu `POST /api/feed/v3` dengan filter playlist; "Semua Lagu" mencoba `/api/library`, feed v3, feed v2; project mencoba `/api/project/{id}` dan variasinya.
