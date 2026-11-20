@@ -38,13 +38,14 @@ export function normalizeClip(c) {
     image_url: c.image_url || `https://cdn1.suno.ai/image_${c.id}.jpeg`,
     duration: (c.metadata && c.metadata.duration) || c.duration || null,
     status: c.status || 'complete',
+    model_name: c.major_model_version || c.model_name || '',
     created_at: c.created_at || null,
   };
 }
 
 function unwrapClip(item) {
   if (!item || typeof item !== 'object') return null;
-  // Playlist responses nest the song: { clip: {...} } / { song: {...} }
+  // Playlist / project responses often nest the song: { clip: {...} } / { song: {...} }
   const inner = item.clip || item.song || item.track || null;
   if (inner && inner.id) return inner;
   return item.id ? item : null;
@@ -55,7 +56,7 @@ export function extractClips(data) {
   let arr = null;
   if (Array.isArray(data)) arr = data;
   else {
-    for (const k of ['clips', 'playlist_clips', 'project_clips', 'items', 'results', 'songs', 'tracks', 'data']) {
+    for (const k of ['clips', 'project_clips', 'playlist_clips', 'items', 'results', 'songs', 'tracks', 'data']) {
       if (Array.isArray(data[k])) { arr = data[k]; break; }
     }
     if (!arr && data.project) arr = extractClips(data.project);
@@ -69,6 +70,28 @@ export function extractClips(data) {
     if (c && !seen.has(c.id)) { seen.add(c.id); out.push(c); }
   }
   return out;
+}
+
+export function extractTotalCount(data) {
+  if (!data || typeof data !== 'object') return null;
+  for (const k of ['num_total_clips', 'num_total_results', 'clip_count', 'total_clips', 'total', 'count']) {
+    if (typeof data[k] === 'number' && Number.isFinite(data[k])) return data[k];
+  }
+  if (data.project) return extractTotalCount(data.project);
+  if (data.playlist) return extractTotalCount(data.playlist);
+  return null;
+}
+
+export function extractCursor(data) {
+  if (!data || typeof data !== 'object') return null;
+  return (
+    data.next_cursor ||
+    data.cursor ||
+    data.nextCursor ||
+    (data.meta && data.meta.next_cursor) ||
+    (data.pagination && data.pagination.next_cursor) ||
+    null
+  );
 }
 
 export function extractList(data) {
