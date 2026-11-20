@@ -108,6 +108,7 @@
         <button class="b-ghost" id="selNoneBtn">KOSONGKAN</button>
       </div>
       <div class="status" id="listStatus"></div>
+      <details id="debugBox" style="display:none;margin:6px 0;font-size:11px;color:#5b7d90"><summary>detail teknis (buat laporan kalau lagu kurang)</summary><pre id="debugText" style="white-space:pre-wrap;word-break:break-all"></pre></details>
       <div id="songList"><p style="color:#5b7d90">Set token dulu, terus klik LOAD LAGU.</p></div>
     </div>
 
@@ -179,7 +180,7 @@ $('setTokenBtn').onclick = async () => {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Token ditolak');
     const sel = $('workspaceSel'); sel.innerHTML = '';
-    data.workspaces.forEach(w => { const o=document.createElement('option'); o.value=w.id; o.dataset.type=w.type; o.textContent = w.name + (w.count!=null ? ` — ${w.count} lagu` : ''); sel.appendChild(o); });
+    data.workspaces.forEach(w => { const o=document.createElement('option'); o.value=w.id; o.dataset.type=w.type; if (w.count!=null) o.dataset.count=w.count; o.textContent = w.name + (w.count!=null ? ` — ${w.count} lagu` : ''); sel.appendChild(o); });
     $('tokenBadge').textContent = 'TOKEN VALID'; $('tokenBadge').classList.add('ok');
     showStatus($('tokenStatus'), 'Token valid. Pilih workspace, terus klik LOAD LAGU.');
   } catch(e){ $('tokenBadge').textContent='BELUM LOGIN'; $('tokenBadge').classList.remove('ok'); showStatus($('tokenStatus'), e.message, true); }
@@ -212,7 +213,7 @@ async function loadSongs(){
   const sel = $('workspaceSel'); const opt = sel.options[sel.selectedIndex];
   showStatus($('listStatus'), 'Mengambil daftar lagu…');
   try {
-    const r = await fetch('/api/feed', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token, workspaceId: sel.value, type: opt ? opt.dataset.type : 'all', page }) });
+    const r = await fetch('/api/feed', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token, workspaceId: sel.value, type: opt ? opt.dataset.type : 'all', page, expected: opt && opt.dataset.count ? Number(opt.dataset.count) : null }) });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Gagal load lagu');
     songs = data.clips || [];
@@ -222,7 +223,8 @@ async function loadSongs(){
       page = data.page;
       $('prevBtn').disabled = page <= 0;
       $('nextBtn').disabled = page >= data.totalPages - 1;
-      if (songs.length) showStatus($('listStatus'), `Halaman ${page + 1} dari ${data.totalPages} — total ${data.total} lagu di workspace ini.`);
+      if (songs.length) showStatus($('listStatus'), `Halaman ${page + 1} dari ${data.totalPages} — total ${data.total} lagu di workspace ini.` + (data.expected && data.total < data.expected ? ` (dropdown bilang ${data.expected} — lagi dicari jalan lain, screenshot detail teknis di bawah daftar ya)` : ''));
+      if (data.debug && data.debug.length) { $('debugBox').style.display='block'; $('debugText').textContent = (data.via ? 'via: ' + data.via + '\n' : '') + data.debug.join('\n'); }
     } else { $('prevBtn').disabled = page === 0; $('nextBtn').disabled = songs.length === 0; }
     renderSongs();
   } catch(e){ showStatus($('listStatus'), e.message, true); }

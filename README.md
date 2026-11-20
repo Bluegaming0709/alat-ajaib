@@ -39,6 +39,12 @@ Tidak ada database, tidak ada environment variable yang wajib diisi.
 3. **Lemari Lagu**: pilih workspace/playlist → LOAD LAGU → centang lagu → DOWNLOAD SEMUA. Tiap lagu disiapkan server, lalu klik **SIMPAN** di kartunya (dialog Save As / unduhan browser). Ada juga tombol TAB BARU sebagai cadangan.
 4. **Pintu Kemana Saja**: download 1 lagu dari UUID / URL suno.com/song/… tanpa token untuk lagu publik.
 
+## Perbaikan v5 (kumpulan strategi pagination)
+
+- Masalah v4: endpoint Suno yang pertama berhasil ternyata mengabaikan parameter halaman, jadi server berhenti di 20 lagu pertama ("Halaman 1 dari 1") padahal workspace berisi 60.
+- Sekarang server mencoba **banyak strategi pagination** (playlist v1 per halaman, feed/v3 per halaman `{page:n}`, feed/v3 cursor, playlist v2 tracks, playlist/clips, basis halaman 0 dan 1) dan memakai hasil **terlengkap**; jumlah lagu di dropdown dikirim sebagai target (`expected`) supaya server tidak berhenti sebelum target tercapai.
+- Di halaman ada panel **"detail teknis"** di bawah status daftar lagu: isinya catatan tiap endpoint Suno yang dicoba + hasilnya. Kalau jumlah lagu masih kurang, screenshot panel itu menunjukkan persis endpoint mana yang bermasalah.
+
 ## Perbaikan v4 (pagination NEXT/PREV)
 
 - Model pagination sesuai aplikasi referensi: **20 lagu per halaman**, tombol **NEXT/PREV** jalan antar halaman sampai lagu terakhir (workspace 100 lagu = 5 halaman).
