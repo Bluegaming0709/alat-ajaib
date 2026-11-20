@@ -39,6 +39,15 @@ Tidak ada database, tidak ada environment variable yang wajib diisi.
 3. **Lemari Lagu**: pilih workspace/playlist → LOAD LAGU → centang lagu → DOWNLOAD SEMUA. Tiap lagu disiapkan server, lalu klik **SIMPAN** di kartunya (dialog Save As / unduhan browser). Ada juga tombol TAB BARU sebagai cadangan.
 4. **Pintu Kemana Saja**: download 1 lagu dari UUID / URL suno.com/song/… tanpa token untuk lagu publik.
 
+## Perbaikan v7 (lagu kurang + lagu tercampur)
+
+Dari rekaman layar pemakaian v6 terlihat dua kerusakan: PHONK berhenti di 40 dari 60 lagu, dan halaman 2 "DJ AS REMIX" berisi lagu dari workspace lain. Penyebab + perbaikan:
+
+- **Lagu tercampur**: v5 menggabungkan hasil semua strategi. Satu strategi feed yang filternya diabaikan Suno mengembalikan lagu acak dari library, lalu ikut tercampur. v7: **tidak ada penggabungan** — satu strategi menang utuh. Strategi feed hanya boleh menang kalau endpoint membership (playlist/project) kosong total, atau kalau hasilnya mencapai persis jumlah lagu workspace di dropdown.
+- **Berhenti di tengah (40/60)**: halaman Suno yang menjawab error sesaat (429 rate-limit / 5xx) sebelumnya dianggap "daftar habis". v7: error di-retry sampai 3x dengan jeda, request antar-halaman diberi pacing, dan paging hanya berhenti pada respon 200 yang benar-benar kosong.
+- **Satu tembakan besar dulu**: endpoint membership dicoba dengan `page_size=99999` (trik yang dipakai tools Suno lain di endpoint library) sebelum paging biasa — kalau Suno mengabulkan, seluruh isi workspace datang dalam 1 request.
+- Panel "detail teknis" sekarang juga mencatat status HTTP tiap halaman + field respon, jadi kegagalan berikutnya terbaca persis.
+
 ## Perbaikan v6 (samakan contoh referensi)
 
 - Header bagian Lemari Lagu sekarang punya badge **"TOTAL LAGU • HAL X"** seperti aplikasi referensi (mis. "101 LAGU • HAL 1"), berubah tiap pindah halaman.

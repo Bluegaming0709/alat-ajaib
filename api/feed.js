@@ -3,14 +3,20 @@ import { sunoHeaders, extractClips, normalizeClip, readBody, SUNO_API } from './
 // POST { token, workspaceId, type, page, expected }
 //   -> { clips, page, totalPages, total, expected, via, debug }
 //
-// Pagination model shown to the user: 20 songs per page, PREV/NEXT walks pages.
-// Suno's own paging is inconsistent per endpoint (some ignore `page`, some are
-// cursor-based, v2 playlist returns metadata only), so the server collects the
-// workspace's full list by trying several paging strategies and keeping the
-// most complete result, caches it briefly, then slices out the page of 20.
+// User-facing pagination: 20 songs per page, PREV/NEXT walks the pages.
+// v7 lessons from live testing:
+//  - NEVER merge results across strategies: a feed strategy whose filter
+//    Suno ignores returns songs from OTHER workspaces and pollutes the list.
+//    One strategy wins, whole and untouched.
+//  - A page that answers with an HTTP error (429 rate-limit / 5xx) is NOT
+//    the end of the list. Retry with backoff; only a clean 200 with zero
+//    new songs ends paging. Bursts of page requests get paced.
+//  - Try one huge page_size first (Suno's library accepts page_size=99999):
+//    a single request beats twenty paged ones.
 const PAGE_SIZE = 20;
 const cache = new Map();
 const CACHE_MS = 10 * 60 * 1000;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export default async function handler(req, res) {
   try {
@@ -20,13 +26,13 @@ export default async function handler(req, res) {
     const expected = Number(body.expected || 0) || null;
     if (!token) { res.status(400).json({ error: 'Set token dulu di bagian Kantong Token.' }); return; }
 
-    const cacheKey = `v5:${type || 'all'}:${workspaceId || 'all'}:${token.slice(-12)}`;
+    const cacheKey = `v7:${type || 'all'}:${workspaceId || 'all'}:${token.slice(-12)}`;
     let entry = cache.get(cacheKey);
     let debug = [];
     if (!entry || Date.now() - entry.at > CACHE_MS) {
       const headers = sunoHeaders(token);
       const attempts = [];
-      const MAX_PAGES = 20;
+      const MAX_PAGES = 25;
       const MAX_SONGS = 800;
 
       async function fetchJson(url, opts = {}) {
@@ -34,125 +40,150 @@ export default async function handler(req, res) {
         const data = await r.json().catch(() => null);
         return { status: r.status, data };
       }
+      // Fetch one page; on 429/5xx retry with backoff. Returns {status, data, clips}.
+      async function fetchPage(label, p, makeRequest) {
+        let last = { status: 0, data: null, clips: [] };
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const { status, data } = await makeRequest();
+            const clips = extractClips(data).map(normalizeClip).filter(Boolean);
+            last = { status, data, clips };
+            if (status === 429 || status >= 500) {
+              attempts.push(`${label} p${p} -> HTTP ${status} (percobaan ${attempt + 1})`);
+              await sleep(800 * (attempt + 1));
+              continue;
+            }
+            return last;
+          } catch (e) {
+            attempts.push(`${label} p${p} -> ${e.message} (percobaan ${attempt + 1})`);
+            await sleep(800 * (attempt + 1));
+          }
+        }
+        return last;
+      }
       function mergeInto(seen, out, clips) {
         let added = 0;
         for (const c of clips) if (c && !seen.has(c.id)) { seen.add(c.id); out.push(c); added++; }
         return added;
       }
-      // Strategy: page a GET endpoint (page numbers from firstPage upward).
       async function getPages(label, buildUrl, firstPage) {
         const seen = new Set(); const out = [];
         for (let i = 0; i < MAX_PAGES; i++) {
           const p = firstPage + i;
-          let status, data;
-          try { ({ status, data } = await fetchJson(buildUrl(p))); }
-          catch (e) { attempts.push(`${label} p${p} -> ${e.message}`); break; }
-          const clips = extractClips(data).map(normalizeClip).filter(Boolean);
+          if (i > 0) await sleep(200);
+          const { status, clips } = await fetchPage(label, p, () => fetchJson(buildUrl(p)));
           const added = mergeInto(seen, out, clips);
           attempts.push(`${label} p${p} -> HTTP ${status}, ${clips.length} lagu (${added} baru)`);
-          if (!added || out.length >= MAX_SONGS) break;
+          if (status !== 200) break;              // error after retries: stop, don't fake completeness
+          if (!added) break;                      // clean empty/repeat page: real end
+          if (expected && out.length >= expected) break;
+          if (out.length >= MAX_SONGS) break;
         }
         return out;
       }
-      // Strategy: single GET, no paging params.
       async function getOnce(label, url) {
-        try {
-          const { status, data } = await fetchJson(url);
-          const clips = extractClips(data).map(normalizeClip).filter(Boolean);
-          attempts.push(`${label} -> HTTP ${status}, ${clips.length} lagu`);
-          return clips;
-        } catch (e) { attempts.push(`${label} -> ${e.message}`); return []; }
+        const { status, data, clips } = await fetchPage(label, '-', () => fetchJson(url));
+        attempts.push(`${label} -> HTTP ${status}, ${clips.length} lagu; keys: ${data && typeof data === 'object' ? Object.keys(data).join(',') : '-'}`);
+        return clips;
       }
-      // Strategy: POST /api/feed/v3 paged by { page: n } body.
       async function feedV3Pages(label, filters) {
         const seen = new Set(); const out = [];
         for (let i = 0; i < MAX_PAGES; i++) {
-          let status, data;
-          try {
-            ({ status, data } = await fetchJson(`${SUNO_API}/api/feed/v3`, {
-              method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ page: i, filters }),
-            }));
-          } catch (e) { attempts.push(`${label} p${i} -> ${e.message}`); break; }
-          const clips = extractClips(data).map(normalizeClip).filter(Boolean);
+          if (i > 0) await sleep(200);
+          const { status, data, clips } = await fetchPage(label, i, () => fetchJson(`${SUNO_API}/api/feed/v3`, {
+            method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ page: i, filters }),
+          }));
           const added = mergeInto(seen, out, clips);
-          attempts.push(`${label} p${i} -> HTTP ${status}, ${clips.length} lagu (${added} baru)`);
-          if (!added || (data && data.has_more === false) || out.length >= MAX_SONGS) break;
+          attempts.push(`${label} p${i} -> HTTP ${status}, ${clips.length} lagu (${added} baru), has_more=${data ? data.has_more : '?'}`);
+          if (status !== 200 || !added || (data && data.has_more === false)) break;
+          if (expected && out.length >= expected) break;
+          if (out.length >= MAX_SONGS) break;
         }
         return out;
       }
-      // Strategy: POST /api/feed/v3 paged by cursor.
       async function feedV3Cursor(label, filters) {
         const seen = new Set(); const out = [];
         let cursor = null;
         for (let i = 0; i < MAX_PAGES; i++) {
-          let status, data;
-          try {
-            ({ status, data } = await fetchJson(`${SUNO_API}/api/feed/v3`, {
-              method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ limit: 50, cursor, filters }),
-            }));
-          } catch (e) { attempts.push(`${label} -> ${e.message}`); break; }
-          const clips = extractClips(data).map(normalizeClip).filter(Boolean);
+          if (i > 0) await sleep(200);
+          const { status, data, clips } = await fetchPage(label, i, () => fetchJson(`${SUNO_API}/api/feed/v3`, {
+            method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 50, cursor, filters }),
+          }));
           const added = mergeInto(seen, out, clips);
-          attempts.push(`${label} -> HTTP ${status}, ${clips.length} lagu (${added} baru)`);
           cursor = data && (data.next_cursor || data.cursor || data.nextCursor || (data.meta && data.meta.next_cursor) || (data.pagination && data.pagination.next_cursor));
-          if (!added || !cursor || (data && data.has_more === false) || out.length >= MAX_SONGS) break;
+          attempts.push(`${label} #${i} -> HTTP ${status}, ${clips.length} lagu (${added} baru), cursor=${cursor ? 'ada' : 'tidak'}, has_more=${data ? data.has_more : '?'}`);
+          if (status !== 200 || !added || !cursor || (data && data.has_more === false)) break;
+          if (expected && out.length >= expected) break;
+          if (out.length >= MAX_SONGS) break;
         }
         return out;
       }
 
       const PL_FILTER = { disliked: 'False', trashed: 'False', fromStudioProject: { presence: 'False' }, playlist: { presence: 'True', playlistId: workspaceId } };
-      let strategies = [];
+      // Tier 1: membership endpoints (playlist/project/library) — their songs
+      // belong to the workspace by construction. Tier 2: feed queries — only
+      // trusted when tier 1 found nothing, or when they reach the workspace's
+      // known total exactly (a feed whose filter was ignored returns an
+      // unrelated slice of the library and must never win otherwise).
+      let tier1 = []; let tier2 = [];
       if (!workspaceId || workspaceId === 'all' || type === 'all') {
-        strategies = [
+        tier1 = [
+          ['library-bulk', () => getOnce('library-bulk', `${SUNO_API}/api/library?page=1&page_size=99999`)],
+          ['library-pages', () => getPages('library', p => `${SUNO_API}/api/library?page=${p}&page_size=50`, 1)],
+        ];
+        tier2 = [
           ['feed/v3-page', () => feedV3Pages('feed/v3-page', { disliked: 'False', trashed: 'False' })],
-          ['library', () => getPages('library', p => `${SUNO_API}/api/library?page=${p}&page_size=50`, 1)],
           ['feed/v3-cursor', () => feedV3Cursor('feed/v3-cursor', { disliked: 'False', trashed: 'False' })],
-          ['feed/v2', () => getPages('feed/v2', p => `${SUNO_API}/api/feed/v2?page=${p}`, 0)],
         ];
       } else if (type === 'playlist') {
-        strategies = [
-          ['playlist-v1-pages', () => getPages('playlist', p => `${SUNO_API}/api/playlist/${workspaceId}?page=${p}&page_size=50`, 1)],
-          ['feed/v3-page-playlist', () => feedV3Pages('feed/v3-page-pl', PL_FILTER)],
-          ['playlist-v2-tracks', () => getOnce('playlist/v2-tracks', `${SUNO_API}/api/playlist/v2/${workspaceId}/tracks`)],
-          ['playlist-v1-pages0', () => getPages('playlist0', p => `${SUNO_API}/api/playlist/${workspaceId}?page=${p}&page_size=50`, 0)],
-          ['feed/v3-cursor-playlist', () => feedV3Cursor('feed/v3-cursor-pl', PL_FILTER)],
+        tier1 = [
+          ['playlist-bulk', () => getOnce('playlist-bulk', `${SUNO_API}/api/playlist/${workspaceId}?page=1&page_size=99999`)],
+          ['playlist-pages', () => getPages('playlist', p => `${SUNO_API}/api/playlist/${workspaceId}?page=${p}&page_size=50`, 1)],
+          ['playlist-pages0', () => getPages('playlist0', p => `${SUNO_API}/api/playlist/${workspaceId}?page=${p}&page_size=50`, 0)],
           ['playlist-clips', () => getPages('playlist/clips', p => `${SUNO_API}/api/playlist/${workspaceId}/clips?page=${p}&page_size=50`, 1)],
-          ['playlist-noparam', () => getOnce('playlist-noparam', `${SUNO_API}/api/playlist/${workspaceId}`)],
+        ];
+        tier2 = [
+          ['feed/v3-page-playlist', () => feedV3Pages('feed/v3-page-pl', PL_FILTER)],
+          ['feed/v3-cursor-playlist', () => feedV3Cursor('feed/v3-cursor-pl', PL_FILTER)],
         ];
       } else {
         const projFilters = [
           { disliked: 'False', trashed: 'False', fromStudioProject: { presence: 'True', projectId: workspaceId } },
           { disliked: 'False', trashed: 'False', project: { presence: 'True', projectId: workspaceId } },
-          { disliked: 'False', trashed: 'False', fromStudioProject: { presence: 'True', studioProjectId: workspaceId } },
         ];
-        strategies = [
-          ['project-get', () => getOnce('project', `${SUNO_API}/api/project/${workspaceId}`)],
+        tier1 = [
+          ['project-bulk', () => getOnce('project-bulk', `${SUNO_API}/api/project/${workspaceId}`)],
+          ['project-clips', () => getPages('project/clips', p => `${SUNO_API}/api/project/${workspaceId}/clips?page=${p}&page_size=50`, 1)],
+        ];
+        tier2 = [
           ['feed/v3-page-project', () => feedV3Pages('feed/v3-page-pr', projFilters[0])],
           ['feed/v3-page-project2', () => feedV3Pages('feed/v3-page-pr2', projFilters[1])],
-          ['feed/v3-page-project3', () => feedV3Pages('feed/v3-page-pr3', projFilters[2])],
-          ['project-clips', () => getPages('project/clips', p => `${SUNO_API}/api/project/${workspaceId}/clips?page=${p}&page_size=50`, 1)],
           ['feed/v3-cursor-project', () => feedV3Cursor('feed/v3-cursor-pr', projFilters[0])],
         ];
       }
 
-      // Run strategies in order; keep the most complete list (union as backstop).
-      let best = []; let via = null;
-      const unionSeen = new Set(); const union = [];
-      for (const [label, fn] of strategies) {
-        const got = await fn();
-        if (got.length > best.length) { best = got; via = label; }
-        mergeInto(unionSeen, union, got);
-        attempts.push(`== ${label}: ${got.length} lagu (terbaik sejauh ini: ${best.length})`);
-        if (expected && best.length >= expected) break;
-        if (!expected && best.length >= MAX_SONGS) break;
+      async function runTier(strategies) {
+        let best = []; let via = null;
+        for (const [label, fn] of strategies) {
+          const got = await fn();
+          attempts.push(`== ${label}: ${got.length} lagu`);
+          if (got.length > best.length) { best = got; via = label; }
+          if (expected && best.length >= expected) break;
+        }
+        return { best, via };
       }
-      const clips = union.length > best.length ? union : best;
-      if (union.length > best.length) via = (via || '') + '+gabungan';
+      const t1 = await runTier(tier1);
+      let best = t1.best; let via = t1.via;
+      if (!(expected && best.length >= expected) && best.length < MAX_SONGS) {
+        const t2 = await runTier(tier2);
+        const feedWins = best.length === 0 || (expected && t2.best.length >= expected && t2.best.length > best.length);
+        if (feedWins && t2.best.length) { best = t2.best; via = t2.via; }
+      }
       debug = attempts;
-      entry = { at: Date.now(), clips, via };
-      if (clips.length) cache.set(cacheKey, entry);
+      entry = { at: Date.now(), clips: best, via };
+      if (best.length) cache.set(cacheKey, entry);
     }
 
     const all = entry.clips || [];
