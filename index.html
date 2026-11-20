@@ -97,7 +97,7 @@
     </div>
 
     <div class="card">
-      <h2>02 — Lemari Lagu</h2>
+      <h2>02 — Lemari Lagu <span class="badge" id="pageBadge">— LAGU • HAL —</span></h2>
       <label style="font-weight:700;font-size:13px">WORKSPACE / PLAYLIST</label>
       <select id="workspaceSel"><option value="all">Semua Lagu — seluruh akun</option></select>
       <div class="row">
@@ -221,6 +221,7 @@ async function loadSongs(){
     if (!songs.length) showStatus($('listStatus'), data.message || 'Daftar lagu kosong di halaman ini.', true);
     if (typeof data.totalPages === 'number') {
       page = data.page;
+      $('pageBadge').textContent = `${data.total} LAGU • HAL ${page + 1}`;
       $('prevBtn').disabled = page <= 0;
       $('nextBtn').disabled = page >= data.totalPages - 1;
       if (songs.length) showStatus($('listStatus'), `Halaman ${page + 1} dari ${data.totalPages} — total ${data.total} lagu di workspace ini.` + (data.expected && data.total < data.expected ? ` (dropdown bilang ${data.expected} — lagi dicari jalan lain, screenshot detail teknis di bawah daftar ya)` : ''));
@@ -230,7 +231,7 @@ async function loadSongs(){
   } catch(e){ showStatus($('listStatus'), e.message, true); }
 }
 $('loadBtn').onclick = () => { page = 0; loadSongs(); };
-$('workspaceSel').onchange = () => { page = 0; };
+$('workspaceSel').onchange = () => { page = 0; $('pageBadge').textContent = '— LAGU • HAL —'; if (token) loadSongs(); };
 $('prevBtn').onclick = () => { if (page>0){ page--; loadSongs(); } };
 $('nextBtn').onclick = () => { page++; loadSongs(); };
 $('selAllBtn').onclick = () => { document.querySelectorAll('input[data-sel]').forEach(c=>c.checked=true); refreshBar(); };
