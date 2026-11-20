@@ -8,6 +8,10 @@ export function sunoHeaders(token) {
     'Origin': 'https://suno.com',
     'Referer': 'https://suno.com/',
     'Accept': 'application/json, text/plain, */*',
+    // Suno's current web API expects these two headers on library/feed calls;
+    // without them those endpoints can answer 200 with an empty result.
+    'browser-token': Buffer.from(JSON.stringify({ timestamp: Date.now() })).toString('base64'),
+    'device-id': globalThis.crypto.randomUUID(),
   };
   if (token) h['Authorization'] = `Bearer ${token}`;
   return h;
@@ -38,15 +42,33 @@ export function normalizeClip(c) {
   };
 }
 
+function unwrapClip(item) {
+  if (!item || typeof item !== 'object') return null;
+  // Playlist responses nest the song: { clip: {...} } / { song: {...} }
+  const inner = item.clip || item.song || item.track || null;
+  if (inner && inner.id) return inner;
+  return item.id ? item : null;
+}
+
 export function extractClips(data) {
   if (!data) return [];
-  if (Array.isArray(data)) return data;
-  for (const k of ['clips', 'items', 'results', 'data']) {
-    if (Array.isArray(data[k])) return data[k];
+  let arr = null;
+  if (Array.isArray(data)) arr = data;
+  else {
+    for (const k of ['clips', 'playlist_clips', 'project_clips', 'items', 'results', 'songs', 'tracks', 'data']) {
+      if (Array.isArray(data[k])) { arr = data[k]; break; }
+    }
+    if (!arr && data.project) arr = extractClips(data.project);
+    if (!arr && data.playlist) arr = extractClips(data.playlist);
+    if (!arr && data.data && typeof data.data === 'object') arr = extractClips(data.data);
   }
-  if (data.project && Array.isArray(data.project.clips)) return data.project.clips;
-  if (data.playlist && Array.isArray(data.playlist.clips)) return data.playlist.clips;
-  return [];
+  if (!arr) return [];
+  const seen = new Set(); const out = [];
+  for (const it of arr) {
+    const c = unwrapClip(it);
+    if (c && !seen.has(c.id)) { seen.add(c.id); out.push(c); }
+  }
+  return out;
 }
 
 export function extractList(data) {

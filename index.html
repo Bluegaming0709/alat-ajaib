@@ -217,7 +217,7 @@ async function loadSongs(){
     if (!r.ok) throw new Error(data.error || 'Gagal load lagu');
     songs = data.clips || [];
     $('listStatus').style.display='none';
-    if (!songs.length) showStatus($('listStatus'), 'Daftar lagu kosong di halaman ini. Kalau harusnya ada lagu, ambil token baru.', true);
+    if (!songs.length) showStatus($('listStatus'), data.message || 'Daftar lagu kosong di halaman ini.', true);
     $('prevBtn').disabled = page === 0; $('nextBtn').disabled = songs.length === 0;
     renderSongs();
   } catch(e){ showStatus($('listStatus'), e.message, true); }

@@ -39,6 +39,13 @@ Tidak ada database, tidak ada environment variable yang wajib diisi.
 3. **Lemari Lagu**: pilih workspace/playlist → LOAD LAGU → centang lagu → DOWNLOAD SEMUA. Tiap lagu disiapkan server, lalu klik **SIMPAN** di kartunya (dialog Save As / unduhan browser). Ada juga tombol TAB BARU sebagai cadangan.
 4. **Pintu Kemana Saja**: download 1 lagu dari UUID / URL suno.com/song/… tanpa token untuk lagu publik.
 
+## Perbaikan v2 (load lagu)
+
+- Load lagu sekarang memakai strategi waterfall per jenis daftar: playlist mencoba `/api/playlist/v2/{id}`, `/api/playlist/{id}`, `/api/playlist/{id}/clips`, lalu `POST /api/feed/v3` dengan filter playlist; "Semua Lagu" mencoba `/api/library`, feed v3, feed v2; project mencoba `/api/project/{id}` dan variasinya.
+- Bentuk respon playlist yang bersarang (`playlist_clips: [{ clip: {...} }]`) sekarang dikenali.
+- Header `browser-token` dan `device-id` (yang dipakai web Suno sekarang) ikut dikirim.
+- Kalau semua endpoint balas kosong, halaman menampilkan detail teknisnya (endpoint + HTTP status), bukan lagi pesan "ambil token baru" yang menyesatkan.
+
 ## Catatan
 
 - Token Suno hanya disimpan di browser pemakai (sessionStorage), tidak disimpan di server.

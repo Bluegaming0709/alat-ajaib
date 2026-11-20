@@ -12,7 +12,7 @@ export default async function handler(req, res) {
 
     const tries = [
       { url: `${SUNO_API}/api/project/me`, type: 'project' },
-      { url: `${SUNO_API}/api/playlist/me`, type: 'playlist' },
+      { url: `${SUNO_API}/api/playlist/me?page=1&show_trashed=false&show_sharelist=false`, type: 'playlist' },
     ];
     for (const t of tries) {
       try {
